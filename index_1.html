@@ -214,6 +214,63 @@
         border-color: rgba(255, 64, 128, 0.4);
         color: rgba(255, 255, 255, 0.7);
       }
+
+      /* 重置按钮 */
+      #reset-cam-btn {
+        display: none;
+        position: fixed;
+        bottom: 90px;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 8px 22px;
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 30px;
+        color: rgba(255, 255, 255, 0.45);
+        font-size: 11px;
+        font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+        letter-spacing: 0.1em;
+        cursor: pointer;
+        z-index: 15;
+        backdrop-filter: blur(12px);
+        transition: all 0.3s;
+      }
+      #reset-cam-btn:hover {
+        background: rgba(255, 64, 128, 0.15);
+        border-color: rgba(255, 64, 128, 0.4);
+        color: rgba(255, 255, 255, 0.75);
+      }
+
+      /* 手部骨架小窗口 */
+      #hand-debug {
+        display: none;
+        position: fixed;
+        bottom: 130px;
+        right: 20px;
+        width: 160px;
+        height: 120px;
+        background: rgba(0, 0, 0, 0.6);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 12px;
+        overflow: hidden;
+        z-index: 20;
+        backdrop-filter: blur(10px);
+      }
+      #hand-debug-label {
+        position: absolute;
+        top: 4px;
+        left: 8px;
+        font-size: 8px;
+        color: rgba(255, 255, 255, 0.25);
+        font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+        letter-spacing: 0.08em;
+        pointer-events: none;
+      }
+      #hand-debug canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
     </style>
   </head>
   <body>
@@ -255,6 +312,13 @@
       <button class="shape-btn" data-open="ring">○ 环</button>
       <button class="shape-btn" data-open="burst">✺ 烟花</button>
       <button class="shape-btn" data-open="wave">〰 波浪</button>
+    </div>
+
+    <button id="reset-cam-btn">🔄 重置识别</button>
+
+    <div id="hand-debug">
+      <span id="hand-debug-label">手部骨架</span>
+      <canvas id="hand-debug-canvas" width="160" height="120"></canvas>
     </div>
 
     <div id="panel">
@@ -767,12 +831,77 @@
       // ═══ 手势识别 ═══
       const videoEl = document.getElementById("webcam");
       const startBtn = document.getElementById("start-cam-btn");
+      const resetBtn = document.getElementById("reset-cam-btn");
       const statusMsg = document.getElementById("status-msg");
       const handIndicator = document.getElementById("hand-indicator");
       const handIcon = document.getElementById("hand-icon");
       const handLabel = document.getElementById("hand-label");
       const opennessFill = document.getElementById("openness-mini-fill");
       const shapeSelector = document.getElementById("shape-selector");
+      const handDebug = document.getElementById("hand-debug");
+      const handDebugCanvas = document.getElementById("hand-debug-canvas");
+      const hdCtx = handDebugCanvas.getContext("2d");
+
+      let currentHands = null;
+      let currentCamera = null;
+
+      // 手部骨架连接关系
+      const HAND_CONNECTIONS = [
+        [0, 1],
+        [1, 2],
+        [2, 3],
+        [3, 4], // 拇指
+        [0, 5],
+        [5, 6],
+        [6, 7],
+        [7, 8], // 食指
+        [0, 9],
+        [9, 10],
+        [10, 11],
+        [11, 12], // 中指
+        [0, 13],
+        [13, 14],
+        [14, 15],
+        [15, 16], // 无名指
+        [0, 17],
+        [17, 18],
+        [18, 19],
+        [19, 20], // 小指
+        [5, 9],
+        [9, 13],
+        [13, 17], // 掌根横连
+      ];
+
+      function drawHandDebug(landmarks) {
+        hdCtx.clearRect(0, 0, 160, 120);
+        if (!landmarks) return;
+
+        // 画连线
+        hdCtx.strokeStyle = "rgba(255, 80, 140, 0.5)";
+        hdCtx.lineWidth = 1;
+        for (const [a, b] of HAND_CONNECTIONS) {
+          const la = landmarks[a],
+            lb = landmarks[b];
+          hdCtx.beginPath();
+          hdCtx.moveTo((1 - la.x) * 160, la.y * 120);
+          hdCtx.lineTo((1 - lb.x) * 160, lb.y * 120);
+          hdCtx.stroke();
+        }
+
+        // 画关节点
+        for (let i = 0; i < landmarks.length; i++) {
+          const lm = landmarks[i];
+          const x = (1 - lm.x) * 160;
+          const y = lm.y * 120;
+          const isTip = [4, 8, 12, 16, 20].includes(i);
+          hdCtx.fillStyle = isTip
+            ? "rgba(255, 120, 180, 0.9)"
+            : "rgba(255, 255, 255, 0.6)";
+          hdCtx.beginPath();
+          hdCtx.arc(x, y, isTip ? 3 : 1.8, 0, Math.PI * 2);
+          hdCtx.fill();
+        }
+      }
 
       function showStatus(msg, duration = 3000) {
         statusMsg.textContent = msg;
@@ -831,13 +960,43 @@
             handIcon.style.transform = "scale(0.9)";
             handLabel.textContent = "握拳";
           }
+
+          // 绘制手部骨架到小窗口
+          drawHandDebug(lm);
         } else {
           targetDispersion *= 0.95;
           if (targetDispersion < 0.01) targetDispersion = 0;
           opennessFill.style.width = "0%";
           handIcon.textContent = "👀";
           handLabel.textContent = "未检测";
+          drawHandDebug(null);
         }
+      }
+
+      async function stopHandTracking() {
+        // 停止camera循环
+        if (currentCamera) {
+          try {
+            currentCamera.stop();
+          } catch (e) {}
+          currentCamera = null;
+        }
+        // 关闭MediaPipe Hands
+        if (currentHands) {
+          try {
+            currentHands.close();
+          } catch (e) {}
+          currentHands = null;
+        }
+        // 停止摄像头流
+        if (videoEl.srcObject) {
+          videoEl.srcObject.getTracks().forEach((t) => t.stop());
+          videoEl.srcObject = null;
+        }
+        // 重置状态
+        smoothOpenness = 0;
+        targetDispersion = 0;
+        hdCtx.clearRect(0, 0, 160, 120);
       }
 
       async function startHandTracking() {
@@ -861,6 +1020,7 @@
             minTrackingConfidence: 0.5,
           });
           hands.onResults(onHandResults);
+          currentHands = hands;
 
           const camera = new Camera(videoEl, {
             onFrame: async () => {
@@ -870,9 +1030,12 @@
             height: 240,
           });
           await camera.start();
+          currentCamera = camera;
 
           handIndicator.style.display = "flex";
           shapeSelector.style.display = "flex";
+          resetBtn.style.display = "block";
+          handDebug.style.display = "block";
           showStatus("✋ 张开手掌展开文字 · 握拳收回心形", 4000);
         } catch (err) {
           console.error("启动失败:", err);
@@ -882,7 +1045,21 @@
         }
       }
 
+      async function resetHandTracking() {
+        showStatus("正在重置手势识别…", 0);
+        resetBtn.style.pointerEvents = "none";
+        resetBtn.style.opacity = "0.4";
+        await stopHandTracking();
+        // 短暂延时确保资源释放
+        await new Promise((r) => setTimeout(r, 500));
+        resetBtn.style.pointerEvents = "";
+        resetBtn.style.opacity = "";
+        await startHandTracking();
+        showStatus("✅ 手势识别已重置", 2500);
+      }
+
       startBtn.addEventListener("click", startHandTracking);
+      resetBtn.addEventListener("click", resetHandTracking);
     </script>
   </body>
 </html>
